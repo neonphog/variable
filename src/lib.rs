@@ -73,5 +73,8 @@ pub mod util {
     pub use std_err::Error as StdError;
 }
 
+mod prim;
+pub use prim::*;
+
 mod var;
 pub use var::*;
