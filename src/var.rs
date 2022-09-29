@@ -1,277 +1,95 @@
 use crate::*;
+use collections::{hash_map, HashMap};
 
-/// Generic variable storing basic types.
-#[derive(Debug, Clone)]
+/// Reference to a var as an array, returned from assert_array.
+pub struct VarArrRef<'lt>(&'lt mut Vec<Var>);
+
+impl VarArrRef<'_> {
+    /// Access the raw inner vec.
+    pub fn as_raw_mut(&mut self) -> &mut Vec<Var> {
+        &mut self.0
+    }
+}
+
+/// Reference to a var as a map, returned from assert_map.
+pub struct VarMapRef<'lt>(&'lt mut HashMap<Prim, Var>);
+
+impl VarMapRef<'_> {
+    /// Access the raw inner map.
+    pub fn as_raw_mut(&mut self) -> &mut HashMap<Prim, Var> {
+        &mut self.0
+    }
+
+    /// Assert a var is in the map, will create a new unit var if needed.
+    pub fn assert<K: Into<Prim>>(&mut self, key: K) -> &mut Var {
+        match self.0.entry(key.into()) {
+            hash_map::Entry::Occupied(e) => e.into_mut(),
+            hash_map::Entry::Vacant(e) => e.insert(Var::new()),
+        }
+    }
+}
+
+/// Generic variable storing basic primitive types, as well as arrays and maps.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Var(VarInner);
 
 impl util::StdError for Var {}
 
-impl fmt::Display for Var {
+impl<P: Into<Prim>> From<P> for Var {
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl PartialEq for Var {
-    fn eq(&self, other: &Self) -> bool {
-        let mut iter1 = self.0.ident_iter();
-        let mut iter2 = other.0.ident_iter();
-        match (iter1.next(), iter2.next()) {
-            (None, Some(_)) => return false,
-            (Some(_), None) => return false,
-            (Some(a), Some(b)) => {
-                if !a.eq(b) {
-                    return false;
-                }
-            }
-            _ => (),
-        }
-        true
-    }
-}
-
-// Since we're using the bytes, not the floats themselves for
-// comparison, hashing and ordering, this is okay.
-impl Eq for Var {}
-
-impl PartialOrd for Var {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Var {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        let mut iter1 = self.0.ident_iter();
-        let mut iter2 = other.0.ident_iter();
-        match (iter1.next(), iter2.next()) {
-            (None, None) => return cmp::Ordering::Equal,
-            (None, Some(_)) => return cmp::Ordering::Greater,
-            (Some(_), None) => return cmp::Ordering::Less,
-            (Some(a), Some(b)) => match a.cmp(b) {
-                cmp::Ordering::Equal => (),
-                oth => return oth,
-            },
-        }
-        cmp::Ordering::Equal
-    }
-}
-
-impl hash::Hash for Var {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: hash::Hasher,
-    {
-        for slice in self.0.ident_iter() {
-            slice.hash(state);
-        }
-    }
-}
-
-macro_rules! arith_int {
-    ($($t:ty)*) => {$(
-        impl ops::Add<$t> for &Var {
-            type Output = $t;
-
-            #[inline]
-            fn add(self, rhs: $t) -> Self::Output {
-                <$t>::from(self).add(rhs)
-            }
-        }
-
-        impl ops::Add<$t> for Var {
-            type Output = $t;
-
-            #[inline]
-            fn add(self, rhs: $t) -> Self::Output {
-                <$t>::from(self).add(rhs)
-            }
-        }
-
-        impl ops::Add<&Var> for $t {
-            type Output = $t;
-
-            #[inline]
-            fn add(self, rhs: &Var) -> Self::Output {
-                self.add(<$t>::from(rhs))
-            }
-        }
-
-        impl ops::Add<Var> for $t {
-            type Output = $t;
-
-            #[inline]
-            fn add(self, rhs: Var) -> Self::Output {
-                self.add(<$t>::from(rhs))
-            }
-        }
-
-        impl ops::Sub<$t> for &Var {
-            type Output = $t;
-
-            #[inline]
-            fn sub(self, rhs: $t) -> Self::Output {
-                <$t>::from(self).sub(rhs)
-            }
-        }
-
-        impl ops::Sub<$t> for Var {
-            type Output = $t;
-
-            #[inline]
-            fn sub(self, rhs: $t) -> Self::Output {
-                <$t>::from(self).sub(rhs)
-            }
-        }
-
-        impl ops::Sub<&Var> for $t {
-            type Output = $t;
-
-            #[inline]
-            fn sub(self, rhs: &Var) -> Self::Output {
-                self.sub(<$t>::from(rhs))
-            }
-        }
-
-        impl ops::Sub<Var> for $t {
-            type Output = $t;
-
-            #[inline]
-            fn sub(self, rhs: Var) -> Self::Output {
-                self.sub(<$t>::from(rhs))
-            }
-        }
-    )*};
-}
-arith_int!(i8 u8 i16 u16 i32 u32 i64 u64 i128 isize usize);
-
-impl ops::AddAssign<Var> for i16 {
-    fn add_assign(&mut self, rhs: Var) {
-        let rhs = match rhs.0 {
-            VarInner::Int(_, _, i) => i as i16,
-            _ => 0,
-        };
-        *self += rhs;
-    }
-}
-
-impl ops::AddAssign<i16> for Var {
-    fn add_assign(&mut self, rhs: i16) {
-        let this = match self.0 {
-            VarInner::Int(_, _, i) => i as i16,
-            _ => 0,
-        };
-        *self = (this + rhs).into()
-    }
-}
-
-static STATIC_UNIT: Var = Var(VarInner::Unit);
-
-impl ops::Index<&Var> for Var {
-    type Output = Var;
-
-    fn index(&self, index: &Var) -> &Self::Output {
-        match &self.0 {
-            VarInner::Arr(v) => v.index(usize::from(index)),
-            _ => &STATIC_UNIT,
-        }
-    }
-}
-
-impl ops::Index<Var> for Var {
-    type Output = Var;
-
-    #[inline]
-    fn index(&self, index: Var) -> &Self::Output {
-        self.index(&index)
-    }
-}
-
-macro_rules! index {
-    ($($t:ty)*) => {$(
-        impl ops::Index<$t> for Var {
-            type Output = Var;
-
-            #[inline]
-            fn index(&self, index: $t) -> &Self::Output {
-                self.index(Var::from(index))
-            }
-        }
-    )*};
-}
-index!( i8 u8 i16 u16 i32 u32 i64 u64 i128 isize usize String &'static str );
-
-impl From<()> for Var {
-    fn from(_: ()) -> Self {
-        Self(VarInner::Unit)
-    }
-}
-
-impl From<&'static str> for Var {
-    fn from(s: &'static str) -> Self {
-        // TODO - static VarInner variant?
-        Self(VarInner::String(s.to_string().into_boxed_str()))
+    fn from(p: P) -> Self {
+        Self(VarInner::Prim(Box::new(p.into())))
     }
 }
 
 impl From<Vec<Var>> for Var {
-    fn from(v: Vec<Var>) -> Self {
-        Self(VarInner::Arr(v))
+    #[inline]
+    fn from(a: Vec<Var>) -> Self {
+        Self(VarInner::Arr(Box::new(a)))
     }
 }
 
-impl From<String> for Var {
-    fn from(s: String) -> Self {
-        Self(VarInner::String(s.into_boxed_str()))
+impl From<HashMap<Prim, Var>> for Var {
+    #[inline]
+    fn from(m: HashMap<Prim, Var>) -> Self {
+        Self(VarInner::Map(Box::new(m)))
     }
 }
 
-impl From<Vec<u8>> for Var {
-    fn from(b: Vec<u8>) -> Self {
-        b.into_boxed_slice().into()
+impl From<&Var> for () {
+    fn from(_: &Var) -> Self {
+        ()
     }
 }
 
-impl From<Box<[u8]>> for Var {
-    fn from(b: Box<[u8]>) -> Self {
-        match String::from_utf8(b.into_vec()) {
-            Ok(s) => Self(VarInner::String(s.into_boxed_str())),
-            Err(e) => Self(VarInner::Bytes(e.into_bytes().into_boxed_slice())),
+impl From<Var> for () {
+    fn from(_: Var) -> Self {
+        ()
+    }
+}
+
+impl From<&Var> for bool {
+    fn from(p: &Var) -> Self {
+        match &p.0 {
+            VarInner::Prim(p) => (&**p).into(),
+            _ => false,
         }
     }
 }
 
-impl From<i128> for Var {
-    fn from(i: i128) -> Self {
-        let b = bin_sort(i.to_be_bytes(), i >= 0);
-        let s = i.to_string().into_boxed_str();
-        Self(VarInner::Int(b, s, i))
+impl From<Var> for bool {
+    #[inline]
+    fn from(p: Var) -> Self {
+        (&p).into()
     }
 }
 
-macro_rules! from_int {
-    ($($t:ty)*) => {$(
-        impl From<$t> for Var {
-            #[inline]
-            fn from(i: $t) -> Self {
-                (i as i128).into()
-            }
-        }
-    )*};
-}
-from_int!(i8 u8 i16 u16 i32 u32 i64 u64 isize usize);
-
-macro_rules! to_int {
+macro_rules! to_xint {
     ($($t:ty)*) => {$(
         impl From<&Var> for $t {
-            fn from(v: &Var) -> Self {
-                match v.0 {
-                    VarInner::Int(_, _, i) => i.clamp(
-                        <$t>::MIN as i128,
-                        <$t>::MAX as i128,
-                    ) as $t,
-                    VarInner::Float(_, _, f) => f as $t,
+            fn from(p: &Var) -> Self {
+                match &p.0 {
+                    VarInner::Prim(p) => (&**p).into(),
                     _ => 0,
                 }
             }
@@ -279,47 +97,20 @@ macro_rules! to_int {
 
         impl From<Var> for $t {
             #[inline]
-            fn from(v: Var) -> Self {
-                (&v).into()
+            fn from(p: Var) -> Self {
+                (&p).into()
             }
         }
     )*};
 }
-to_int!(i8 u8 i16 u16 i32 u32 i64 u64 i128 isize usize);
-
-impl From<f64> for Var {
-    fn from(f: f64) -> Self {
-        let b = bin_sort(f.to_be_bytes(), f >= 0.0);
-        let s = f.to_string().into_boxed_str();
-        Self(VarInner::Float(b, s, f))
-    }
-}
-
-fn bin_sort<const N: usize>(mut b: [u8; N], is_pos: bool) -> [u8; N] {
-    if is_pos {
-        b[0] = b[0] ^ 0x80;
-    } else {
-        for i in 0..N {
-            b[i] ^= 0xff;
-        }
-    }
-    b
-}
-
-impl From<f32> for Var {
-    #[inline]
-    fn from(f: f32) -> Self {
-        (f as f64).into()
-    }
-}
+to_xint!(i8 u8 i16 u16 i32 u32 i64 u64 isize usize);
 
 macro_rules! to_float {
     ($($t:ty)*) => {$(
         impl From<&Var> for $t {
-            fn from(v: &Var) -> Self {
-                match v.0 {
-                    VarInner::Int(_, _, i) => i as $t,
-                    VarInner::Float(_, _, f) => f as $t,
+            fn from(p: &Var) -> Self {
+                match &p.0 {
+                    VarInner::Prim(p) => (&**p).into(),
                     _ => 0.0,
                 }
             }
@@ -327,106 +118,137 @@ macro_rules! to_float {
 
         impl From<Var> for $t {
             #[inline]
-            fn from(v: Var) -> Self {
-                (&v).into()
+            fn from(p: Var) -> Self {
+                (&p).into()
             }
         }
     )*};
 }
 to_float!(f32 f64);
 
-#[derive(Clone)]
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            VarInner::Prim(p) => write!(f, "Var({:?})", p),
+            VarInner::Arr(a) => write!(f, "Var({:?})", a),
+            VarInner::Map(m) => write!(f, "Var({:?})", m),
+        }
+    }
+}
+
+impl fmt::Display for Var {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.as_str())
+    }
+}
+
+impl Default for Var {
+    #[inline]
+    fn default() -> Self {
+        Self(VarInner::Prim(Box::new(Prim::default())))
+    }
+}
+
+impl Var {
+    /// Construct a new default (unit) Var instance.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the value tracked by this Var instance.
+    #[inline]
+    pub fn set<V: Into<Var>>(&mut self, v: V) {
+        self.0 = (v.into()).0
+    }
+
+    /// Get this variable as a str.
+    pub fn as_str(&self) -> borrow::Cow<'_, str> {
+        match &self.0 {
+            VarInner::Prim(p) => p.as_str(),
+            VarInner::Arr(a) => format!("[{} elem array]", a.len()).into(),
+            VarInner::Map(m) => format!("[{} entry map]", m.len()).into(),
+        }
+    }
+
+    /// Get this variable as a bytes slice.
+    pub fn as_slice(&self) -> borrow::Cow<'_, [u8]> {
+        match &self.0 {
+            VarInner::Prim(p) => p.as_slice(),
+            _ => (&[][..]).into(),
+        }
+    }
+
+    /// As any type that implements From<&Var>.
+    #[inline]
+    pub fn as_<'a, T>(&'a self) -> T
+    where
+        T: From<&'a Var>,
+    {
+        self.into()
+    }
+
+    /// If this var is not already an array, it will be converted into
+    /// an empty array.
+    /// Returns a mutable reference to this var as an array of Vars.
+    pub fn assert_array(&mut self) -> VarArrRef<'_> {
+        // why do we need this extra matches!, rust?
+        if matches!(self.0, VarInner::Arr(_)) {
+            if let VarInner::Arr(a) = &mut self.0 {
+                return VarArrRef(a);
+            }
+            unreachable!()
+        }
+        self.0 = (Var::from(<Vec<Var>>::new())).0;
+        if let VarInner::Arr(a) = &mut self.0 {
+            return VarArrRef(a);
+        }
+        unreachable!()
+    }
+
+    /// If this var is not already a map, it will be converted into
+    /// an empty map.
+    /// Returns a mutable reference to this var as a map of Prim->Vars.
+    pub fn assert_map(&mut self) -> VarMapRef<'_> {
+        // why do we need this extra matches!, rust?
+        if matches!(self.0, VarInner::Map(_)) {
+            if let VarInner::Map(m) = &mut self.0 {
+                return VarMapRef(m);
+            }
+            unreachable!()
+        }
+        self.0 = (Var::from(<HashMap<Prim, Var>>::new())).0;
+        if let VarInner::Map(m) = &mut self.0 {
+            return VarMapRef(m);
+        }
+        unreachable!()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 enum VarInner {
-    Unit,
-    String(Box<str>),
-    Bytes(Box<[u8]>),
-    Int([u8; 16], Box<str>, i128),
-    Float([u8; 8], Box<str>, f64),
-    Arr(Vec<Var>),
+    Prim(Box<Prim>),
+    Arr(Box<Vec<Var>>),
+    Map(Box<HashMap<Prim, Var>>),
 }
 
-impl fmt::Debug for VarInner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+#[cfg(test)]
+mod var_test {
+    use super::*;
+
+    #[test]
+    fn mem_size() {
+        assert_eq!(16, mem::size_of::<Var>());
     }
-}
 
-impl fmt::Display for VarInner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            VarInner::Unit => f.write_str("()"),
-            VarInner::String(s) => f.write_str(s),
-            VarInner::Bytes(b) => {
-                f.write_str("0x")?;
-                for b in b.iter() {
-                    write!(f, "{:02x}", b)?;
-                }
-                Ok(())
-            }
-            VarInner::Int(_, s, _) => f.write_str(s),
-            VarInner::Float(_, s, _) => f.write_str(s),
-            VarInner::Arr(v) => {
-                f.write_str("[")?;
-                let mut first = true;
-                for i in v.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        f.write_str(",")?;
-                    }
-                    i.fmt(f)?;
-                }
-                f.write_str("]")
-            }
-        }
-    }
-}
+    #[test]
+    fn usage() {
+        let mut v = Var::new();
 
-fn sub_conv(v: &Var) -> IdentIter<'_> {
-    v.0.ident_iter()
-}
+        v.assert_map().assert("hello").set("world");
+        v.assert_map().assert(21).set(3.14159);
 
-enum IdentIter<'lt> {
-    Slice(Option<&'lt [u8]>),
-    Sub(
-        Option<Box<IdentIter<'lt>>>,
-        iter::Map<slice::Iter<'lt, Var>, for<'r> fn(&'r Var) -> IdentIter<'r>>,
-    ),
-}
-
-impl<'lt> Iterator for IdentIter<'lt> {
-    type Item = &'lt [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            IdentIter::Slice(s) => s.take(),
-            IdentIter::Sub(cur, it) => {
-                if cur.is_none() {
-                    if let Some(c) = it.next() {
-                        *cur = Some(Box::new(c));
-                    }
-                }
-                if let Some(mut c) = cur.take() {
-                    if let Some(item) = c.next() {
-                        *cur = Some(c);
-                        return Some(item);
-                    }
-                }
-                None
-            }
-        }
-    }
-}
-
-impl VarInner {
-    pub fn ident_iter(&self) -> IdentIter<'_> {
-        match self {
-            VarInner::Unit => IdentIter::Slice(None),
-            VarInner::String(s) => IdentIter::Slice(Some(s.as_bytes())),
-            VarInner::Bytes(b) => IdentIter::Slice(Some(b)),
-            VarInner::Int(b, _, _) => IdentIter::Slice(Some(&b[..])),
-            VarInner::Float(b, _, _) => IdentIter::Slice(Some(&b[..])),
-            VarInner::Arr(v) => IdentIter::Sub(None, v.iter().map(sub_conv)),
-        }
+        println!("{:#?}", v);
     }
 }

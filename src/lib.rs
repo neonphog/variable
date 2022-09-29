@@ -27,6 +27,9 @@ mod lib {
     pub use self::core::pin;
     pub use self::core::result;
     pub use self::core::slice;
+    pub use self::core::borrow;
+    pub use self::core::collections;
+    pub use self::core::sync::Arc;
 
     #[cfg(not(feature = "std"))]
     pub use alloc::vec::Vec;
@@ -78,3 +81,5 @@ pub use prim::*;
 
 mod var;
 pub use var::*;
+
+pub mod hook;
