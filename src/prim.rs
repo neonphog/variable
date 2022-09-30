@@ -120,15 +120,11 @@ macro_rules! from_float {
 from_float!(f32 f64);
 
 impl From<&Prim> for () {
-    fn from(_: &Prim) -> Self {
-        ()
-    }
+    fn from(_: &Prim) -> Self {}
 }
 
 impl From<Prim> for () {
-    fn from(_: Prim) -> Self {
-        ()
-    }
+    fn from(_: Prim) -> Self {}
 }
 
 impl From<&Prim> for bool {
@@ -196,7 +192,6 @@ macro_rules! to_float {
 }
 to_float!(f32 f64);
 
-/*
 macro_rules! other_cmp {
     ($($t:ty)*) => {$(
         impl PartialEq<Prim> for $t {
@@ -225,7 +220,46 @@ macro_rules! other_cmp {
     )*};
 }
 other_cmp!(() bool i8 u8 i16 u16 i32 u32 i64 u64 isize usize f32 f64);
-*/
+
+impl PartialEq<Prim> for str {
+    fn eq(&self, other: &Prim) -> bool {
+        match &*other.0 {
+            PrimInner::S(S(s)) => self.eq(s),
+            PrimInner::SS(SS(s)) => (&self).eq(s),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<Prim> for &str {
+    fn eq(&self, other: &Prim) -> bool {
+        match &*other.0 {
+            PrimInner::S(S(s)) => self.eq(s),
+            PrimInner::SS(SS(s)) => self.eq(s),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<str> for Prim {
+    fn eq(&self, other: &str) -> bool {
+        match &*self.0 {
+            PrimInner::S(S(s)) => s.eq(other),
+            PrimInner::SS(SS(s)) => s.eq(&other),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<&str> for Prim {
+    fn eq(&self, other: &&str) -> bool {
+        match &*self.0 {
+            PrimInner::S(S(s)) => s.eq(other),
+            PrimInner::SS(SS(s)) => s.eq(other),
+            _ => false,
+        }
+    }
+}
 
 impl fmt::Debug for Prim {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -336,10 +370,10 @@ impl Eq for F {}
 
 fn bin_sort<const N: usize>(mut b: [u8; N], is_pos: bool) -> [u8; N] {
     if is_pos {
-        b[0] = b[0] ^ 0x80;
+        b[0] ^= 0x80;
     } else {
-        for i in 0..N {
-            b[i] ^= 0xff;
+        for i in b.iter_mut() {
+            *i ^= 0xff;
         }
     }
     b
@@ -362,11 +396,7 @@ impl Ord for F {
 
 impl PartialEq for F {
     fn eq(&self, other: &Self) -> bool {
-        if let cmp::Ordering::Equal = self.cmp(other) {
-            true
-        } else {
-            false
-        }
+        matches!(self.cmp(other), cmp::Ordering::Equal)
     }
 }
 
@@ -381,11 +411,11 @@ impl hash::Hash for F {
 
 impl F {
     pub fn new(f: f64) -> Self {
-        Self(if f == f64::NAN {
+        Self(if f.is_nan() {
             0.0
-        } else if f == f64::INFINITY {
+        } else if f.is_infinite() && f.is_sign_positive() {
             f64::MAX
-        } else if f == f64::NEG_INFINITY {
+        } else if f.is_infinite() {
             f64::MIN
         } else {
             f
@@ -393,6 +423,7 @@ impl F {
     }
 }
 
+#[allow(clippy::derive_hash_xor_eq)]
 #[derive(Clone, Hash)]
 enum PrimInner {
     N(N),
@@ -408,11 +439,7 @@ enum PrimInner {
 impl cmp::PartialEq for PrimInner {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        if let cmp::Ordering::Equal = self.cmp(other) {
-            true
-        } else {
-            false
-        }
+        matches!(self.cmp(other), cmp::Ordering::Equal)
     }
 }
 
@@ -432,7 +459,7 @@ impl cmp::Ord for PrimInner {
             (PrimInner::S(S(a)), PrimInner::S(S(b))) => a.cmp(b),
             (PrimInner::SS(SS(a)), PrimInner::SS(SS(b))) => a.cmp(b),
             (PrimInner::S(S(a)), PrimInner::SS(SS(b))) => a.as_str().cmp(b),
-            (PrimInner::SS(SS(a)), PrimInner::S(S(b))) => (&**a).cmp(&b.as_str()),
+            (PrimInner::SS(SS(a)), PrimInner::S(S(b))) => (&**a).cmp(b.as_str()),
             (PrimInner::D(D(a)), PrimInner::D(D(b))) => a.cmp(b),
             (PrimInner::I(I(a)), PrimInner::I(I(b))) => a.cmp(b),
             (PrimInner::U(U(a)), PrimInner::U(U(b))) => a.cmp(b),
@@ -484,7 +511,9 @@ mod prim_test {
             Prim::from(3.14159),
         ];
         let mut v = expect.iter().cloned().collect::<Vec<_>>();
-        v.sort_unstable();
+        for _ in 0..10000 {
+            v.sort_unstable();
+        }
         assert_eq!(expect, v);
     }
 

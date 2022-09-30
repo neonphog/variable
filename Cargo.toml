@@ -3,10 +3,6 @@ name = "variable"
 version = "0.0.1"
 edition = "2021"
 
-[dependencies]
-serde = { version = "1.0", optional = true, default-features = false, features = [ "alloc" ] }
-tokio = { version = "1.21.2", optional = true, default-features = false, features = [ "sync" ] }
-
 [features]
 default = ["std", "serde", "experimental_hook"]
 
@@ -15,3 +11,10 @@ std = [ "serde?/std" ]
 
 # enable experimental hook module
 experimental_hook = [ "tokio" ]
+
+[dependencies]
+serde = { version = "1.0", optional = true, default-features = false, features = [ "alloc" ] }
+tokio = { version = "1.21.2", optional = true, default-features = false, features = [ "sync" ] }
+
+[dev-dependencies]
+tokio = { version = "1.21.2", features = [ "full" ] }

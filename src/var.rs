@@ -1,39 +1,30 @@
 use crate::*;
-use collections::{hash_map, HashMap};
-
-/// Reference to a var as an array, returned from assert_array.
-pub struct VarArrRef<'lt>(&'lt mut Vec<Var>);
-
-impl VarArrRef<'_> {
-    /// Access the raw inner vec.
-    pub fn as_raw_mut(&mut self) -> &mut Vec<Var> {
-        &mut self.0
-    }
-}
-
-/// Reference to a var as a map, returned from assert_map.
-pub struct VarMapRef<'lt>(&'lt mut HashMap<Prim, Var>);
-
-impl VarMapRef<'_> {
-    /// Access the raw inner map.
-    pub fn as_raw_mut(&mut self) -> &mut HashMap<Prim, Var> {
-        &mut self.0
-    }
-
-    /// Assert a var is in the map, will create a new unit var if needed.
-    pub fn assert<K: Into<Prim>>(&mut self, key: K) -> &mut Var {
-        match self.0.entry(key.into()) {
-            hash_map::Entry::Occupied(e) => e.into_mut(),
-            hash_map::Entry::Vacant(e) => e.insert(Var::new()),
-        }
-    }
-}
+use collections::HashMap;
+use util::*;
 
 /// Generic variable storing basic primitive types, as well as arrays and maps.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Var(VarInner);
 
 impl util::StdError for Var {}
+
+impl From<&Var> for Prim {
+    fn from(v: &Var) -> Self {
+        match &v.0 {
+            VarInner::Prim(p) => (&**p).clone(),
+            _ => Prim::default(),
+        }
+    }
+}
+
+impl From<&mut Var> for Prim {
+    fn from(v: &mut Var) -> Self {
+        match &v.0 {
+            VarInner::Prim(p) => (&**p).clone(),
+            _ => Prim::default(),
+        }
+    }
+}
 
 impl<P: Into<Prim>> From<P> for Var {
     #[inline]
@@ -57,15 +48,11 @@ impl From<HashMap<Prim, Var>> for Var {
 }
 
 impl From<&Var> for () {
-    fn from(_: &Var) -> Self {
-        ()
-    }
+    fn from(_: &Var) -> Self {}
 }
 
 impl From<Var> for () {
-    fn from(_: Var) -> Self {
-        ()
-    }
+    fn from(_: Var) -> Self {}
 }
 
 impl From<&Var> for bool {
@@ -126,12 +113,79 @@ macro_rules! to_float {
 }
 to_float!(f32 f64);
 
+macro_rules! other_cmp {
+    ($($t:ty)*) => {$(
+        impl PartialEq<Var> for $t {
+            fn eq(&self, other: &Var) -> bool {
+                if let VarInner::Prim(p) = &other.0 {
+                    return self.eq(&**p);
+                }
+                false
+            }
+        }
+
+        impl PartialEq<$t> for Var {
+            fn eq(&self, other: &$t) -> bool {
+                if let VarInner::Prim(p) = &self.0 {
+                    return (&**p).eq(other);
+                }
+                false
+            }
+        }
+    )*};
+}
+other_cmp!(() bool i8 u8 i16 u16 i32 u32 i64 u64 isize usize f32 f64);
+
+impl PartialEq<Var> for str {
+    fn eq(&self, other: &Var) -> bool {
+        match &other.0 {
+            VarInner::Prim(p) => (&**p).eq(self),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<Var> for &str {
+    fn eq(&self, other: &Var) -> bool {
+        match &other.0 {
+            VarInner::Prim(p) => (&**p).eq(self),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<str> for Var {
+    fn eq(&self, other: &str) -> bool {
+        match &self.0 {
+            VarInner::Prim(p) => (&**p).eq(other),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<&str> for Var {
+    fn eq(&self, other: &&str) -> bool {
+        match &self.0 {
+            VarInner::Prim(p) => (&**p).eq(other),
+            _ => false,
+        }
+    }
+}
+
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            VarInner::Prim(p) => write!(f, "Var({:?})", p),
-            VarInner::Arr(a) => write!(f, "Var({:?})", a),
-            VarInner::Map(m) => write!(f, "Var({:?})", m),
+        if f.alternate() {
+            match &self.0 {
+                VarInner::Prim(p) => write!(f, "Var({:#?})", p),
+                VarInner::Arr(a) => write!(f, "Var({:#?})", a),
+                VarInner::Map(m) => write!(f, "Var({:#?})", m),
+            }
+        } else {
+            match &self.0 {
+                VarInner::Prim(p) => write!(f, "Var({:?})", p),
+                VarInner::Arr(a) => write!(f, "Var({:?})", a),
+                VarInner::Map(m) => write!(f, "Var({:?})", m),
+            }
         }
     }
 }
@@ -226,6 +280,7 @@ impl Var {
     }
 }
 
+#[allow(clippy::box_collection)]
 #[derive(Clone, PartialEq, Eq)]
 enum VarInner {
     Prim(Box<Prim>),
