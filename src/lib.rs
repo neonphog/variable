@@ -74,6 +74,9 @@ pub mod util {
     pub use ::std::error::Error as StdError;
     #[cfg(all(not(feature = "std"), not(feature = "serde")))]
     pub use std_err::Error as StdError;
+
+    #[cfg(feature = "experimental_hook")]
+    pub mod hook;
 }
 
 mod prim;
@@ -81,5 +84,3 @@ pub use prim::*;
 
 mod var;
 pub use var::*;
-
-pub mod hook;
