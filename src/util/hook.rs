@@ -4,6 +4,8 @@ use crate::*;
 use collections::HashMap;
 use sync::Weak;
 
+const DRIVER_CLOSED: &str = "DriverClosed";
+
 fn uniq() -> Prim {
     static UNIQ: sync::atomic::AtomicU64 = sync::atomic::AtomicU64::new(0);
     UNIQ.fetch_add(1, sync::atomic::Ordering::Relaxed).into()
@@ -43,6 +45,12 @@ pub trait Hook: 'static + Send {
 /// Hook system handle.
 pub struct HookSys(tokio::sync::mpsc::UnboundedSender<Cmd>);
 
+impl Drop for HookSys {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 /// Driver future for processing hook triggers.
 pub type HookSysDriver = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static + Send>>;
 
@@ -56,6 +64,31 @@ impl HookSys {
         let driver = Box::pin(hook_task(Arc::downgrade(&this), cmd_recv));
 
         (this, driver)
+    }
+
+    /// Returns a clone of the internal system state.
+    pub async fn clone_state(&self) -> Result<Var, Prim> {
+        let (s, r) = tokio::sync::oneshot::channel();
+        let _ = self.0.send(Cmd::CloneState(s));
+        r.await.map_err(|_| DRIVER_CLOSED.into())
+    }
+
+    /// Shutdown the hook system.
+    /// The system will still shutdown even if the returned future
+    /// is dropped without ever being polled.
+    /// Note: is_closed will continue to return `true`
+    /// until the driver receives the signal and actually shuts down.
+    pub fn close(&self) -> impl future::Future<Output = ()> + 'static + Send {
+        let (s, r) = tokio::sync::oneshot::channel();
+        let _ = self.0.send(Cmd::Close(s));
+        async move {
+            let _ = r.await;
+        }
+    }
+
+    /// Check if the hook is closed.
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
     }
 
     /// Push a new hook into the system.
@@ -101,9 +134,9 @@ impl HookSys {
             })
             .is_err()
         {
-            return Err("DriverClosed".into());
+            return Err(DRIVER_CLOSED.into());
         }
-        r.await.map_err(|_| Prim::from("DriverClosed"))?
+        r.await.map_err(|_| Prim::from(DRIVER_CLOSED))?
     }
 
     /// Respond with success to a request via request_id.
@@ -132,6 +165,8 @@ impl HookSys {
 }
 
 enum Cmd {
+    Close(tokio::sync::oneshot::Sender<()>),
+    CloneState(tokio::sync::oneshot::Sender<Var>),
     PushHook(Box<dyn Hook>),
     Trigger(Prim, Var),
     Request {
@@ -151,8 +186,19 @@ enum Cmd {
 async fn hook_task(hnd: Weak<HookSys>, mut recv: tokio::sync::mpsc::UnboundedReceiver<Cmd>) {
     let mut inner = SysInner::new(hnd);
 
+    let mut close_respond = None;
+
     while let Some(cmd) = recv.recv().await {
-        inner.dispatch(cmd);
+        if let ops::ControlFlow::Break(r) = inner.dispatch(cmd) {
+            close_respond = Some(r);
+            break;
+        }
+    }
+
+    recv.close();
+    drop(recv);
+    if let Some(close_respond) = close_respond {
+        let _ = close_respond.send(());
     }
 }
 
@@ -175,8 +221,14 @@ impl SysInner {
         }
     }
 
-    pub fn dispatch(&mut self, cmd: Cmd) {
+    pub fn dispatch(&mut self, cmd: Cmd) -> ops::ControlFlow<tokio::sync::oneshot::Sender<()>> {
         match cmd {
+            Cmd::Close(r) => {
+                return ops::ControlFlow::Break(r);
+            }
+            Cmd::CloneState(r) => {
+                let _ = r.send(self.state.clone());
+            }
             Cmd::PushHook(hook) => self.push_hook(hook),
             Cmd::Trigger(trigger, arg) => self.trigger(trigger, arg),
             Cmd::Request {
@@ -192,6 +244,7 @@ impl SysInner {
                 request_id,
             } => self.respond(response, request_id),
         }
+        ops::ControlFlow::Continue(())
     }
 
     pub fn push_hook(&mut self, hook: Box<dyn Hook>) {
@@ -375,12 +428,15 @@ mod hook_test {
         let hook_b_id = b_r.await.unwrap();
         println!("HookB::on_init: HookId: {}", &hook_b_id);
 
+        println!("state clone: {:#?}", sys.clone_state().await);
+
         assert_eq!(
             "hello world!",
             sys.request((), (), hook_a_id).await.unwrap(),
         );
 
-        drop(sys);
+        sys.close().await;
+        assert!(sys.is_closed());
         task.await.unwrap();
     }
 }

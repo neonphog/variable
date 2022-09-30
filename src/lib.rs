@@ -22,7 +22,7 @@ mod lib {
     pub use self::core::cmp;
     pub use self::core::collections;
     pub use self::core::fmt;
-    pub use self::core::future::Future;
+    pub use self::core::future;
     pub use self::core::hash;
     pub use self::core::iter;
     pub use self::core::mem;
